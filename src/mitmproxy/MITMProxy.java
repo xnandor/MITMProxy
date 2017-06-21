@@ -5,10 +5,16 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.logging.SocketHandler;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
@@ -22,10 +28,130 @@ import org.apache.http.impl.client.HttpClientBuilder;
 
 public class MITMProxy {
 	public static boolean isListening = true;
-			
+	private static long  indexTime = 0;
+	private static byte[] index;	
+	
+	public static byte[] reloadIndex() {
+		Path path = Paths.get("web/index.html");
+		try {
+			FileTime time = Files.getLastModifiedTime(path);
+			long fileTime = time.toMillis();
+			if (fileTime > indexTime) {
+				indexTime = fileTime;
+				// Reloadfile
+				index = Files.readAllBytes(path);
+			}
+		} catch (Exception e) {
+			;
+		}
+		return index;
+	}
+	
 	public static void main(String[] args) {
-		//initSSL();
+		// PreLoad Rules
+		ProxyRule.getAllRules();
+		// Listen On Port
 		new ProxyServer(80);
+	}
+}
+
+class ProxyRule {
+	private static HashMap<String, Long> fileTimes = new HashMap<String, Long>();
+	private static HashMap<String, ArrayList<ProxyRule>> fileRules = new HashMap<String, ArrayList<ProxyRule>>();
+	public String domainRegex;
+	public String pathRegex;
+	public String contentTypeRegex;
+	public String action;
+	public String locationRegex;
+	public String replacementString;
+	
+	public static ArrayList<ProxyRule> getAllRules() {
+		// REFRESH RULES
+		Stream<Path> paths;
+		try {
+			paths = Files.walk(Paths.get("etc/"));
+			paths.filter(Files::isRegularFile).forEach( (path) -> {
+				try {
+					boolean shouldReload = false;
+					String pathString = path.toAbsolutePath().toString();
+					long modTime = Files.getLastModifiedTime(path).toMillis();
+					long lastTime = 0;
+					if (!fileTimes.containsKey(pathString)) {
+						fileTimes.put(pathString, new Long(modTime));
+						fileRules.put(pathString, new ArrayList<ProxyRule>());
+						shouldReload = true;
+					} else {
+						lastTime = fileTimes.get(pathString);
+						if (modTime < lastTime) {
+							shouldReload = true;
+						}
+					}
+					if (shouldReload) {
+						System.out.println("RELOADING RULES:");
+						ArrayList<ProxyRule> rules = new ArrayList<ProxyRule>();
+						byte[] bytes = Files.readAllBytes(path);
+						String rulesString = new String(bytes, StandardCharsets.UTF_8);
+						// Strip Comments
+						rulesString = rulesString.replaceAll("\\/\\/.*?[\\n\\r]+", "");
+						// Condense Tabs
+						rulesString = rulesString.replaceAll("\\t+", "\t");
+						String[] lines = rulesString.split("\r?\n");
+						for (String line : lines) {
+							String[] tokens = line.split("\t");
+							if (tokens.length == 6) {
+								ProxyRule rule = new ProxyRule();
+								rule.domainRegex = tokens[0];
+								rule.pathRegex = tokens[1];
+								rule.contentTypeRegex = tokens[2];
+								rule.action = tokens[3];
+								rule.locationRegex = tokens[4];
+								rule.replacementString = tokens[5];
+								if (rule.replacementString.startsWith("inject-file:")) {
+									try {
+										rule.replacementString = rule.replacementString.replaceAll("inject-file:", "");
+										rule.replacementString = "inject/"+rule.replacementString;
+										Path injectFile = Paths.get(rule.replacementString);
+										byte[] injectBytes = Files.readAllBytes(injectFile);
+										rule.replacementString = new String(injectBytes, StandardCharsets.UTF_8);
+									} catch (Exception e) {
+										rule.replacementString = "MITMProxy-NO-INJECT-FILE-FOUND";
+									}
+									
+								}
+								if (rules != null) {
+									rules.add(rule);
+									System.out.println("ADDED PROXY RULE<"+pathString+">:\t\t"+rule.toString());
+								}
+								fileRules.put(pathString, rules);
+							}
+						}
+					}
+				} catch (Throwable t) {
+					t.printStackTrace();
+				}
+			});
+			paths.close();
+		} catch (IOException e1) {
+			e1.printStackTrace();
+		}
+		// GET ALL RULES
+		ArrayList<ProxyRule> allRules = new ArrayList<ProxyRule>();
+		if (fileRules != null) {
+			fileRules.forEach((path, rules) -> {
+				if (rules != null) {
+					rules.forEach((rule) -> {
+						if (rule != null) {
+							allRules.add(rule);
+						}
+					});
+				}
+			});
+		}
+		return allRules;
+	}
+	
+	public String toString() {
+		return domainRegex +"\t"+ pathRegex +"\t"+ contentTypeRegex +"\t"+ action +"\t"+ locationRegex +"\t"+ replacementString;
 	}
 }
 
@@ -240,6 +366,10 @@ class ProxyResponseEditor {
 			if (contentType.contains("text/html")) {
 				String body = new String(bodyBytes);
 				// PARSE HTML START
+				ArrayList<ProxyRule> rules = ProxyRule.getAllRules();
+				for (ProxyRule rule : rules) {
+					body = body.replaceAll(rule.locationRegex, rule.replacementString);
+				}
 				// PARSE HTML END
 				// HANDLE FLAVICON
 				if (!body.contains("rel=\"shortcut icon\"")) {
@@ -378,7 +508,22 @@ class ProxySocketHandler extends Thread {
 			ProxyRequestEditor requestEditor = new ProxyRequestEditor();
 			requestEditor.addStripParam(urlParam);
 			requestEditor.process(inRequestBytes, inRequestSize);
-			forward(requestEditor);
+			String path = requestEditor.getProcessedPath();
+			if (requestEditor.hasParams(ProxySocketHandler.urlParam)) {
+				forward(requestEditor);
+			} else if (path.compareTo("/index.html") == 0) {
+				byte[] responseBodyBytes = MITMProxy.reloadIndex();
+				String responseHeaders = "HTTP/1.1 200 OK\r\n"
+						+ "Server: MITMProxy Server\r\n"
+						+ "Content-Type: text/html\r\n"
+						+ "Conetne-Length: "+responseBodyBytes.length+"\r\n"
+						+ "Connection: Closed\r\n\r\n";
+				byte[] responseHeadersBytes = responseHeaders.getBytes(StandardCharsets.US_ASCII);
+				byte[] both = new byte[responseHeadersBytes.length + responseBodyBytes.length]; 
+				System.arraycopy(responseHeadersBytes, 0, both,                           0, responseHeadersBytes.length);
+				System.arraycopy(responseBodyBytes,    0, both, responseHeadersBytes.length, responseBodyBytes.length);
+				inResponse.write(both);
+			}
 		} catch (ClientProtocolException e) {
 			e.printStackTrace();
 		} catch (IOException e) {
