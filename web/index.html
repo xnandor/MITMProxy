@@ -4,118 +4,60 @@
 		<link rel="stylesheet" href="index.css">
 	</head>
 	<body>
-		<h1 class="center">Proxy Injector</h1>
+		<div class="center">
+			<h1>Proxy Injector</h1>
+			<input type="text" placeholder="http://somedomaintoinject.com/index.html">
+		</div>
 		<canvas id="canvas"></canvas>
 		<script id="2d-vertex-shader" type="notjs">
-  			// an attribute will receive data from a buffer
   			attribute vec4 a_position;
-			varying vec2 guv;
-  			// all shaders have a main function
- 			 void main() {
- 			   // gl_Position is a special variable a vertex shader
- 			   // is responsible for setting
+			varying vec2 uv;
+ 			void main() {
  			   gl_Position = a_position;
-				guv = a_position.xy;
+			   uv = a_position.xy;
 			 }
 		</script>
 		<script id="2d-fragment-shader" type="notjs">
-precision mediump float;
+precision lowp float;
 
 uniform float iGlobalTime;
-uniform vec2 resolution;
-uniform vec2 aspect;
-varying vec2 guv;
-
-float noise(in vec2 position) {
-    return fract(sin(dot(position.xy, vec2(12.9898,78.233)))*43758.5453123);
-}
-
-// Value Noise courtesy of Book of Shaders
-// https://thebookofshaders.com/11/
-float noise2d(vec2 uv) {
-    
-    vec2 pos = floor(uv);
-    vec2 fractional = fract(uv);
-    
-    // four corners
-    float a = noise(pos);					// bottom left
-    float b = noise(pos + vec2(1., 0.));	// bottom right
-    float c = noise(pos + vec2(1., 1.));	// top right
-    float d = noise(pos + vec2(0., 1.));	// top left
-    
-    vec2 intermix = smoothstep(0., 1., fractional);
-    
-    float value = mix(a, b, intermix.x);
-    value += (d - a) * intermix.y * (1.0 - intermix.x);
-    value += (c - b) * intermix.x * intermix.y;
-    
-    return value;
-}
-
-// Fractal noise courtesy of iq
-// https://www.shadertoy.com/view/XdXGW8
-float fractalNoise2d(vec2 uv) {
-    uv *= 3.0;
-    uv.x -= iGlobalTime / 5.0;
-    uv.y += sin(iGlobalTime / 5.0) * 2.0;
-    
-    mat2 rotate = mat2(1.6 - sin(iGlobalTime / 100.0) / 10.0, 1.2, -1.2, 1.6);
-    
-    float value = 0.5 * noise2d(uv);
-    uv *= rotate;
-    value += 0.25 * noise2d(uv);
-    uv *= rotate;
-    value += 0.125 * noise2d(uv);
-    uv *= rotate;
-    value += 0.0625 * noise2d(uv);
-    
-    return value;
-}
+uniform vec2 iResolution;
+varying vec2 uv;
 
 void main() {
-	vec4 fragCoord = gl_FragCoord;
-	vec2 iResolution = resolution;
-	vec2 uv = guv.xy;
-    uv -= 0.5;
-	float aspectRatio = 1.0;
-    uv.y *= 1.0;
-    
-    // use josemorval paper sheet for reference
-    float dist,dist1,mask,l,final = 1.0;
-	//This parameter controls how many sheets are in the picture
-    const float s = 0.01;
+	vec2 fragCoord = 0.5*iResolution*(uv+vec2(1.0, 1.0));
+	vec2 p = (2.0*fragCoord.xy-iResolution.xy)/iResolution.y;
+    float tau = 3.1415926535*2.0;
+    float a = atan(p.x,p.y);
+    float r = length(p)*0.75;
+    vec2 uv = vec2(a/tau,r);
+	float speed = 0.5;
 	
-    float amp,freq;
-	uv.y -=iResolution.y/iResolution.x;
-    
-    float value = fractalNoise2d(uv)*5.;
-    
-    //This parameter controls when the algorithm stop drawing sheets (-1 is no sheet, 1 all sheets)
-    //float factorSheets = iResolution.y/iResolution.x;
-    
-	//const float start = -iResolution.y/iResolution.x;
-	const float halfRange = 1.0;
-	const float nHalfRange = 1.0;
-    for(float f = nHalfRange; f < halfRange; f+=s){
-        uv.y += s;
-        //This parameter controls the frequency of the waves, modulated by an exp along the x-axis 
-        freq = 5.0*exp(-10.0*(f*f)) + value*sin(iGlobalTime);
-        //This parameter controls the amplitude of the waves, modulated by an exp along the x-axis 
-        amp = 0.12*exp(-10.0*(f*f)) + value / 20. *cos(iGlobalTime);
-        dist = amp*pow(sin(freq*uv.x + iGlobalTime + 100.0),2.0)*exp(-5.0*uv.x*uv.x)-uv.y;
-        mask = 1.0-smoothstep(0.0,0.005,dist);
-
-        //Draw each line of the sheet
-        dist1 = abs(dist);
-        dist1 = smoothstep(0.0,0.01,dist1);
-		
-        final = mix(dist1, -dist1*final,mask);
+	//get the color
+	float xCol = (uv.x - (speed*iGlobalTime / 3.0)) * 3.0;
+	xCol = mod(xCol, 3.0);
+	vec3 horColour = vec3(0.25, 0.25, 0.25);
+	
+	if (xCol < 1.0) {
+		horColour.r += 1.0 - xCol;
+		horColour.g += xCol;
+	} else if (xCol < 2.0) {
+		xCol -= 1.0;
+		horColour.g += 1.0 - xCol;
+		horColour.b += xCol;
+	} else {
+		xCol -= 2.0;
+		horColour.b += 1.0 - xCol;
+		horColour.r += xCol;
 	}
 
-	gl_FragColor = vec4(final*2.,final,final*uv.y*3., 1.0);
-}
-
-
+	// draw color beam
+	uv = (2.0 * uv) - 1.0;
+	float thickness = 1.0;
+	float beamWidth =  thickness * abs(1.0 / (30.0 * uv.y));
+	vec3 horBeam = vec3(beamWidth);
+	gl_FragColor = vec4((( horBeam) * horColour), 1.0);
+}		
 		</script>
 		<script src="index.js"></script>
 	</body>
