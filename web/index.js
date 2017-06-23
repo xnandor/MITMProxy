@@ -1,5 +1,20 @@
   "use strict";
 
+function goButtonPressed() {
+	var edit = document.getElementById("urlEdit");
+	var uri = edit.value;
+	var queryParam = "?imgproxyhost=";
+	window.location.href = queryParam+uri;
+}
+
+function keyPressed(e) {
+	window.wasKeyJustPressed = true;
+	window.lastKeyPressed = e.keyCode - 1.0;
+    if (e.keyCode == 13) {
+    	goButtonPressed();
+    }
+}
+  
 function createShader(gl, type, source) {
   var shader = gl.createShader(type);
   gl.shaderSource(shader, source);
@@ -30,6 +45,7 @@ function sleep(ms) {
 }
 
 function main() {
+	window.lastKeyPressed = 0.0;
   var canvas = document.getElementById("canvas");
   var gl = canvas.getContext("webgl");
   if (!gl) {
@@ -58,7 +74,17 @@ function main() {
   ];
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
 
+  var lastKeyTime = 0.0;
+  var keyAccumulator = 0.0;
   function animate(ms) {
+	  if (window.wasKeyJustPressed) {
+		  keyAccumulator += 1.0;
+		  lastKeyTime = ms;
+		  window.wasKeyJustPressed = false;
+	  }
+	  var deltaKeyTime = ms - lastKeyTime;
+	  keyAccumulator = keyAccumulator / 1.1;
+	  
 	  // Resize
 	  gl.canvas.width  = window.innerWidth;
 	  gl.canvas.height = window.innerHeight;
@@ -74,6 +100,8 @@ function main() {
 	  // Uniforms
 	  gl.uniform1f( gl.getUniformLocation( program, 'iGlobalTime' ), ms/1000.0 );
 	  gl.uniform2f( gl.getUniformLocation( program, 'iResolution' ), gl.canvas.width, gl.canvas.height );
+	  gl.uniform1f( gl.getUniformLocation( program, 'timeSinceKey' ), deltaKeyTime );
+	  gl.uniform1f( gl.getUniformLocation( program, 'keyAccumulator' ), keyAccumulator );
 	  
 	  // Turn on the attribute
 	  gl.enableVertexAttribArray(positionAttributeLocation);

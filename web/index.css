@@ -80,6 +80,11 @@ input[type="text"] {
 }
 
 input[type="text"]:focus {
-	border: solid 5px #00d1ff;
+	border: solid 5px #dddddd;
 }
+
+button {
+	height: 36px;
+}
+
 

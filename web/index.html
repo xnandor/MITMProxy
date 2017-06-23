@@ -6,7 +6,10 @@
 	<body>
 		<div class="center">
 			<h1>Proxy Injector</h1>
-			<input type="text" placeholder="http://somedomaintoinject.com/index.html">
+			<span>
+			<input id="urlEdit" onkeypress="keyPressed(event)" type="text" placeholder="http://somedomaintoinject.com/index.html">
+			<button onclick="goButtonPressed()">Go</button>
+			</span>
 		</div>
 		<canvas id="canvas"></canvas>
 		<script id="2d-vertex-shader" type="notjs">
@@ -22,6 +25,8 @@ precision lowp float;
 
 uniform float iGlobalTime;
 uniform vec2 iResolution;
+uniform float timeSinceKey;
+uniform float keyAccumulator;
 varying vec2 uv;
 
 void main() {
@@ -29,7 +34,7 @@ void main() {
 	vec2 p = (2.0*fragCoord.xy-iResolution.xy)/iResolution.y;
     float tau = 3.1415926535*2.0;
     float a = atan(p.x,p.y);
-    float r = length(p)*0.75;
+    float r = length(p)*0.75*iResolution.y/600.0;
     vec2 uv = vec2(a/tau,r);
 	float speed = 0.5;
 	
@@ -53,7 +58,17 @@ void main() {
 
 	// draw color beam
 	uv = (2.0 * uv) - 1.0;
-	float thickness = 1.0;
+	
+
+	float keyMaxAmp = keyAccumulator;
+	float keyIntervalMS = 1000.0;
+	float keyAmp = 0.1*keyMaxAmp*(keyIntervalMS - timeSinceKey)/1000.0;
+	if (keyAmp < 0.0) {
+		keyAmp = 0.0;
+	}
+	float keyOffset = tau*(iGlobalTime);
+	float n = 12.0;
+	float thickness = keyAmp*(0.5*sin(n*a+keyOffset)+0.5)+0.7;
 	float beamWidth =  thickness * abs(1.0 / (30.0 * uv.y));
 	vec3 horBeam = vec3(beamWidth);
 	gl_FragColor = vec4((( horBeam) * horColour), 1.0);
